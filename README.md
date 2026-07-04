@@ -5,6 +5,10 @@
 Slimy is a tool to find slime chunk clusters in Minecraft seeds.
 It can search on either the CPU or the GPU, and makes use of multithreading to speed up the CPU search.
 
+> The CPU search path has been heavily optimized with SIMD (up to 16-wide vectors),
+> 2D prefix sums with zero-padding, and `@shuffle`-based parallel prefix scans.
+> On a 13th Gen i9-13980HX it reaches ~5.7 billion locations/sec — roughly 3× the original.
+
 ## Usage
 
 **NOTE: Slimy uses entirely chunk coordinates. This means you should multiply all result coordinates by 16 to get the corresponding block coordinates**
@@ -77,6 +81,15 @@ This option can be combined with the `-f` option to produce unsorted output in a
 
 ```
 slimy-SYSTEM -uf csv -- SEED RANGE THRESHOLD >results.csv
+```
+
+### Streaming output
+
+Results can be streamed during the search instead of being output all at once at the end.
+This is done with the `-r` option, which spawns a dedicated reporter thread:
+
+```
+slimy-SYSTEM -r -- SEED RANGE THRESHOLD
 ```
 
 ### Custom thread count
