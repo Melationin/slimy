@@ -29,6 +29,10 @@ pub const SearchParams = struct {
     z1: i32,
 
     method: SearchMethod,
+
+    /// If true, results are emitted during the search via a dedicated reporter thread
+    /// instead of being buffered and emitted all at once after completion.
+    report_during_search: bool = false,
 };
 
 pub const SearchMethod = union(enum) {

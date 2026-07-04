@@ -122,12 +122,7 @@ const OutputContext = struct {
     total: u64 = 1,
 
     const progress_tick = std.time.ns_per_s / 4;
-    const progress_spinner = [_]u21{
-        '◜',
-        '◝',
-        '◞',
-        '◟',
-    };
+    const progress_spinner = [_]u8{ '|', '/', '-', '\\' };
 
     pub fn init(allocator: std.mem.Allocator, stdout: *std.Io.Writer, stderr: *std.Io.Writer, options: OutputOptions) OutputContext {
         return .{
@@ -193,9 +188,10 @@ const OutputContext = struct {
 
         const tick = timer.read() / progress_tick;
 
-        try self.stderr.writeAll("\r\x1b[K");
+        // \r + overwrite with spaces + \r: works on all terminals, no ANSI needed
+        try self.stderr.writeAll("\r                    \r");
 
-        try self.stderr.print("[{u}] {d:.2}%", .{
+        try self.stderr.print("[{c}] {d:.2}%", .{
             progress_spinner[tick % progress_spinner.len],
             @as(f64, @floatFromInt(100_00 * self.completed / self.total)) * 0.01,
         });
@@ -205,7 +201,7 @@ const OutputContext = struct {
     fn clearProgress(self: *OutputContext) !void {
         if (self.progress_timer == null) return;
 
-        try self.stderr.writeAll("\r\x1b[K");
+        try self.stderr.writeAll("\r                    \r");
         try self.stderr.flush();
     }
 
@@ -214,7 +210,7 @@ const OutputContext = struct {
 
         const tick = timer.read() / progress_tick;
 
-        try self.stderr.print("[{u}] {d:.2}%", .{
+        try self.stderr.print("[{c}] {d:.2}%", .{
             progress_spinner[tick % progress_spinner.len],
             @as(f64, @floatFromInt(100_00 * self.completed / self.total)) * 0.01,
         });
@@ -364,6 +360,7 @@ fn usage(out: *std.Io.Writer) u8 {
         \\  -j THREADS      Number of threads to use (for cpu method only)
         \\  -s FILENAME     Read search parameters from a JSON file (or - for stdin)
         \\  -b              Benchmark mode
+        \\  -r              Stream results during search (via reporter thread)
         \\
         \\
     ) catch return 1;
@@ -415,6 +412,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
         s: ?[]const u8 = null,
 
         b: bool = false,
+        r: bool = false,
     }, &args);
 
     if (flags.h) return error.Help;
@@ -429,7 +427,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
         return error.InvalidFormat;
     };
 
-    const progress = !flags.q and std.fs.File.stderr().supportsAnsiEscapeCodes();
+    const progress = !flags.q;
 
     const method_id = std.meta.stringToEnum(std.meta.Tag(slimy.SearchMethod), flags.m) orelse {
         std.log.err("Invalid search method '{f}'. Must be 'gpu' or 'cpu'", .{@as(
@@ -488,6 +486,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
                 .z1 = p.z1,
 
                 .method = method,
+                .report_during_search = flags.r,
             };
         }
         searches = s;
@@ -510,6 +509,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
             .z1 = range_n,
 
             .method = method,
+            .report_during_search = flags.r,
         };
         searches = s;
     }

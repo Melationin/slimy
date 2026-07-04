@@ -2,24 +2,25 @@ const std = @import("std");
 
 pub const simd = struct {
     /// This is experimentally faster than the value std.simd.suggestVectorLength gives, which is 4
-    pub const lanes = 8;
+    pub const lanes = 16;
 
     pub const Vec64 = @Vector(lanes, i64);
     pub const Vec32 = @Vector(lanes, i32);
     pub const Vecb = @Vector(lanes, bool);
 
     /// Tests whether the chunks (x, z), (x, z + 1) ... (x, z + lanes - 1) are slime chunks
-    pub fn areSlime(world_seed: i64, x: i32, z: i32) Vecb {
+    pub const Vecu8 = @Vector(lanes, u8);
+
+    pub fn areSlime(world_seed: i64, x: i32, z: i32) Vecu8 {
         var random = Random.init(getRandomSeeds(world_seed, x, z));
-        return random.nextInts(10) == @as(Vec32, @splat(0));
+        return @intFromBool(random.nextInts(10) == @as(Vec32, @splat(0)));
     }
 
-    /// Tests whether the chunks (x, z), (x, z + 1) ... (x, z + lanes - 1) are slime chunks
     /// Uses a biased random function that is faster but very occasionally
     /// (<1 in 100,000,000) gives an incorrect result
-    pub fn areSlimeBiased(world_seed: i64, x: i32, z: i32) Vecb {
+    pub fn areSlimeBiased(world_seed: i64, x: i32, z: i32) Vecu8 {
         var random = Random.init(getRandomSeeds(world_seed, x, z));
-        return random.nextIntsBiased(10) == @as(Vec32, @splat(0));
+        return @intFromBool(random.nextIntsBiased(10) == @as(Vec32, @splat(0)));
     }
 
     /// Returns the seeds used by the PRNG for chunks (x, z), (x, z + 1) ... (x, z + lanes - 1)
@@ -35,7 +36,7 @@ pub const simd = struct {
         const magic1: Vec64 = @splat(4392871);
         const magic2: Vec32 = @splat(389711);
 
-        const zs: Vec32 = @as(Vec32, @splat(z)) + @as(Vec32, .{ 0, 1, 2, 3, 4, 5, 6, 7 });
+        const zs: Vec32 = @as(Vec32, @splat(z)) + @as(Vec32, .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 });
         const z_increment =
             @as(Vec64, zs *% zs) *% magic1 +%
             @as(Vec64, zs *% magic2);
@@ -133,13 +134,13 @@ pub const simd = struct {
         const test_block = @import("test_data.zig").block;
         for (test_block, 0..) |row, z| {
             for (row, 0..) |c, x| {
-                try std.testing.expectEqual(c == 'O', areSlime(test_seed, @intCast(x), @intCast(z))[0]);
+                try std.testing.expectEqual(@intFromBool(c == 'O'), areSlime(test_seed, @intCast(x), @intCast(z))[0]);
             }
         }
 
         const random = @import("test_data.zig").random;
         for (random) |location| {
-            try std.testing.expectEqual(location.slime, areSlime(test_seed, location.x, location.z)[0]);
+            try std.testing.expectEqual(@intFromBool(location.slime), areSlime(test_seed, location.x, location.z)[0]);
         }
     }
 
@@ -150,7 +151,7 @@ pub const simd = struct {
         for (0..10000) |_| {
             const x = rand.intRangeAtMost(i32, -30_000_000 / 16, 30_000_000 / 16);
             const z = rand.intRangeAtMost(i32, -30_000_000 / 16, 30_000_000 / 16);
-            try std.testing.expectEqual(scalar.isSlime(0x51133, x, z), areSlime(0x51133, x, z)[0]);
+            try std.testing.expectEqual(@intFromBool(scalar.isSlime(0x51133, x, z)), areSlime(0x51133, x, z)[0]);
         }
     }
 };

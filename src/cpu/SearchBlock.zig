@@ -3,29 +3,67 @@ const scalar = @import("slime_check.zig").scalar;
 const simd = @import("slime_check.zig").simd;
 const slimy = @import("../slimy.zig");
 
-pub const size = 256;
-pub const tested_size: comptime_int = size - mask.len + 1;
-pub const offset: comptime_int = @divFloor(mask.len, 2);
+pub const size = 512;
+pub const window_size: comptime_int = 17;
+pub const tested_size: comptime_int = size - window_size + 1;
+pub const offset: comptime_int = @divFloor(window_size, 2);
 
-comptime {
-    var cell: Cell = .{ .slime = 0b0000, .strip_count = 0b1111 };
-    std.debug.assert(@as(u8, @bitCast(cell)) == 0b11110000);
-    cell = .{ .slime = 0b1101, .strip_count = 0b1000 };
-    std.debug.assert(@as(u8, @bitCast(cell)) == 0b10001101);
-}
+const lanes = simd.lanes;
+pub const Cell = @Vector(lanes, u8);
 
-pub const Cell = packed struct {
-    /// least significant bits
-    slime: u4,
-    /// most significant bits
-    strip_count: u4,
+/// Minecraft despawn sphere mask: inner radius 1 < d² ≤ outer radius 8 (17×17 donut)
+const donut_mask: [window_size][window_size]bool = blk: {
+    const inner = 1;
+    const outer = 8;
+    var m: [window_size][window_size]bool = undefined;
+    for (0..window_size) |dx| {
+        for (0..window_size) |dz| {
+            const rx = @as(i32, @intCast(dx)) - offset;
+            const rz = @as(i32, @intCast(dz)) - offset;
+            const d2 = rx * rx + rz * rz;
+            m[dx][dz] = inner * inner < d2 and d2 <= outer * outer;
+        }
+    }
+    break :blk m;
 };
 
-data: [size * size]Cell,
+/// Contiguous horizontal runs in the donut mask, for prefix sum queries.
+/// Rows 7/8/9 have two runs (gap at center); all others have one. Total: 20 runs.
+const DonutRun = struct { dx: u5, c1: u5, c2: u5 };
+const donut_runs_len: comptime_int = 20;
+const donut_runs: [donut_runs_len]DonutRun = blk: {
+    var runs: [donut_runs_len]DonutRun = undefined;
+    var n: usize = 0;
+    for (0..window_size) |dx| {
+        var in_run = false;
+        var start: u5 = 0;
+        for (0..window_size) |dz| {
+            if (donut_mask[dx][dz] and !in_run) {
+                start = @intCast(dz);
+                in_run = true;
+            } else if (!donut_mask[dx][dz] and in_run) {
+                runs[n] = .{ .dx = @intCast(dx), .c1 = start, .c2 = @intCast(dz - 1) };
+                n += 1;
+                in_run = false;
+            }
+        }
+        if (in_run) {
+            runs[n] = .{ .dx = @intCast(dx), .c1 = start, .c2 = @intCast(window_size - 1) };
+            n += 1;
+        }
+    }
+    if (n != donut_runs_len) @compileError("donut_runs_len mismatch");
+    break :blk runs;
+};
+
+const cells_per_row = size / lanes;
+comptime { if (@mod(size, lanes) != 0) @compileError("size must be a multiple of lanes"); }
+
+data: [size * cells_per_row]Cell,
 min_x: i32,
 min_z: i32,
 
-/// initialized chunks with scalar code
+/// Initialize chunks with scalar code
 pub fn initScalar(world_seed: i64, min_x: i32, min_z: i32) @This() {
     var chunk: @This() = .{
         .data = undefined,
@@ -33,14 +71,17 @@ pub fn initScalar(world_seed: i64, min_x: i32, min_z: i32) @This() {
         .min_z = min_z - offset,
     };
     for (0..size) |rel_x| {
-        for (0..size) |rel_z| {
-            const abs_x: i32 = min_x - offset + @as(i32, @intCast(rel_x));
-            const abs_z: i32 = min_z - offset + @as(i32, @intCast(rel_z));
-
-            chunk.data[rel_x * size + rel_z] = .{
-                .slime = @intFromBool(scalar.isSlime(world_seed, abs_x, abs_z)),
-                .strip_count = 0,
-            };
+        for (0..cells_per_row) |j| {
+            const rel_z = j * lanes;
+            var cell: Cell = undefined;
+            inline for (0..lanes) |z_offset| {
+                cell[z_offset] = @intFromBool(scalar.isSlime(
+                    world_seed,
+                    min_x - offset + @as(i32, @intCast(rel_x)),
+                    min_z - offset + @as(i32, @intCast(rel_z + z_offset)),
+                ));
+            }
+            chunk.data[rel_x * cells_per_row + j] = cell;
         }
     }
     return chunk;
@@ -48,182 +89,100 @@ pub fn initScalar(world_seed: i64, min_x: i32, min_z: i32) @This() {
 
 /// Initialize chunks with simd routine
 pub fn initSimd(world_seed: i64, min_x: i32, min_z: i32) @This() {
-    const lanes = simd.lanes;
-    comptime std.debug.assert(@mod(size, lanes) == 0);
-
     var chunk: @This() = .{
         .data = undefined,
         .min_x = min_x - offset,
         .min_z = min_z - offset,
     };
     for (0..size) |rel_x| {
-        for (0..size / lanes) |j| {
+        for (0..cells_per_row) |j| {
             const rel_z = j * lanes;
             const abs_x: i32 = min_x - offset + @as(i32, @intCast(rel_x));
             const abs_z: i32 = min_z - offset + @as(i32, @intCast(rel_z));
-            const slime = simd.areSlime(world_seed, abs_x, abs_z);
-            for (0..lanes) |z_offset| {
-                chunk.data[rel_x * size + rel_z + z_offset] = .{
-                    .slime = @intFromBool(slime[z_offset]),
-                    .strip_count = 0,
-                };
-            }
+            chunk.data[rel_x * cells_per_row + j] = simd.areSlimeBiased(world_seed, abs_x, abs_z);
         }
     }
     return chunk;
 }
 
-/// For each chunk (x, z), outputs the amount of slime chunks in (x, z - 7)..[x, z]
-/// to a separate buffer
-pub fn preprocess(self: *@This()) void {
-    const chunk_len = 7;
-    comptime std.debug.assert(size >= chunk_len);
-    for (0..size) |x| {
-        for (x * size..x * size + size - chunk_len + 1) |i| {
-            var count: u8 = 0;
-            for (0..chunk_len) |j| count += @bitCast(self.data[i + j]);
-            count &= 0xf;
-            self.data[i].strip_count = @intCast(count);
+/// Parallel prefix sum of one Cell via @shuffle tree: O(log lanes) instead of O(lanes).
+inline fn scanCell(v: Cell, carry: *u8) Cell {
+    const zero = @as(Cell, @splat(0));
+    var result = v;
+    comptime var shift: comptime_int = 1;
+    inline while (shift < lanes) : (shift <<= 1) {
+        comptime var mask: [lanes]i32 = undefined;
+        inline for (0..lanes) |i| {
+            mask[i] = if (i < shift) @as(i32, -1) else @as(i32, @intCast(i - shift));
         }
+        result +%= @shuffle(u8, result, zero, mask);
     }
+    result +%= @as(Cell, @splat(carry.*));
+    carry.* = result[lanes - 1];
+    return result;
 }
 
-/// [.@] - ignore
-/// [+] - use preprocessed value
-/// [-] - use preprocessed value but subtract slime value of chunk
-/// [o] - use slime value of chunk
-const mask: [17][17]u8 = .{
-    strip(". . . . . . . . o . . . . . . . .".*),
-    strip(". . . . . + @ @ @ @ @ @ . . . . .".*),
-    strip(". . . + @ @ @ @ @ @ o o o o . . .".*),
-    strip(". . + @ @ @ @ @ - @ @ @ @ @ @ . .".*),
-    strip(". . + @ @ @ @ @ - @ @ @ @ @ @ . .".*),
-    strip(". + @ @ @ @ @ @ + @ @ @ @ @ @ o .".*),
-    strip(". + @ @ @ @ @ @ + @ @ @ @ @ @ o .".*),
-    strip(". + @ @ @ @ @ @ . + @ @ @ @ @ @ .".*),
-    strip("+ @ @ @ @ @ @ . . . + @ @ @ @ @ @".*),
-    strip(". + @ @ @ @ @ @ . + @ @ @ @ @ @ .".*),
-    strip(". + @ @ @ @ @ @ + @ @ @ @ @ @ o .".*),
-    strip(". + @ @ @ @ @ @ + @ @ @ @ @ @ o .".*),
-    strip(". . + @ @ @ @ @ - @ @ @ @ @ @ . .".*),
-    strip(". . + @ @ @ @ @ - @ @ @ @ @ @ . .".*),
-    strip(". . . + @ @ @ @ @ @ o o o o . . .".*),
-    strip(". . . . . + @ @ @ @ @ @ . . . . .".*),
-    strip(". . . . . . . . o . . . . . . . .".*),
-};
-
-/// Strips spaces from string
-pub fn strip(string: [17 + 16]u8) [17]u8 {
-    var out: [17]u8 = undefined;
-    var i = 0;
-    for (string) |char| {
-        if (char != ' ') {
-            out[i] = char;
-            i += 1;
-        }
-    }
-    return out;
-}
-
-const Coord = struct { x: usize, z: usize };
-
-/// add preprocessed value to count
-const use_preprocessed = blk: {
-    var buf: [30]Coord = undefined;
-    var coords = std.ArrayListUnmanaged(Coord).initBuffer(&buf);
-    for (mask, 0..) |row, x| {
-        for (row, 0..) |char, z| {
-            if (char == '+' or char == '-') coords.appendAssumeCapacity(.{ .x = x, .z = z });
-        }
-    }
-    const coords_final = coords.items[0..coords.items.len];
-    break :blk coords_final.*;
-};
-
-/// add slime value of cell to count
-const add = blk: {
-    var buf: [30]Coord = undefined;
-    var coords = std.ArrayListUnmanaged(Coord).initBuffer(&buf);
-    for (mask, 0..) |row, x| {
-        for (row, 0..) |char, z| {
-            if (char == 'o') coords.appendAssumeCapacity(.{ .x = x, .z = z });
-        }
-    }
-    const coords_final = coords.items[0..coords.items.len];
-    break :blk coords_final.*;
-};
-
-/// subtract binary value of cell from count
-const sub = blk: {
-    var buf: [30]Coord = undefined;
-    var coords = std.ArrayListUnmanaged(Coord).initBuffer(&buf);
-    for (mask, 0..) |row, x| {
-        for (row, 0..) |char, z| {
-            if (char == '-') coords.appendAssumeCapacity(.{ .x = x, .z = z });
-        }
-    }
-    const coords_final = coords.items[0..coords.items.len];
-    break :blk coords_final.*;
-};
-
-/// For every chunk within the searched area defined by this `SearchBlock`
-/// checks whether the amount of slime chunk slime chunks in spawn range of a player
-/// at the center of each chunk meets the given `threshold`
+/// For every chunk within the searched area defined by this `SearchBlock`,
+/// counts slime chunks in a 17×17 window centered at each position
+/// and reports those meeting the given threshold.
+/// Uses zero-padded 2D prefix sums: single unified formula, zero branches.
 pub fn calculateSliminess(
     self: *@This(),
     params: slimy.SearchParams,
     context: anytype,
     comptime resultCallback: fn (@TypeOf(context), slimy.Result) void,
 ) usize {
+    // Scalar prefix for O(1) queries
+    var prefix: [size + 1][size + 1]u8 = undefined;
+
+    for (0..size + 1) |i| {
+        prefix[0][i] = 0;
+        prefix[i][0] = 0;
+    }
+
+    // Row 0 → prefix row 1: horizontal SIMD scan only (no previous row)
+    {
+        var carry: u8 = 0;
+        for (0..cells_per_row) |j| {
+            const col = j * lanes;
+            const v = scanCell(self.data[j], &carry);
+            inline for (0..lanes) |i| prefix[1][col + 1 + i] = v[i];
+        }
+    }
+
+    // Remaining rows: horizontal scan + vertical vector add
+    for (1..size) |row| {
+        const prow = row + 1;
+        var carry: u8 = 0;
+        for (0..cells_per_row) |j| {
+            const col = j * lanes;
+            var v: Cell = scanCell(self.data[row * cells_per_row + j], &carry);
+            var prev: Cell = undefined;
+            inline for (0..lanes) |i| prev[i] = prefix[row][col + 1 + i];
+            v +%= prev;
+            inline for (0..lanes) |i| prefix[prow][col + 1 + i] = v[i];
+        }
+    }
+
     var sufficiently_slimy_chunks: usize = 0;
-    for (0..size - mask.len + 1) |x| {
-        for (0..size - mask.len + 1) |z| {
-            var count: u8 = 0;
-
-            // The .strip_count field is stored in the upper 4 bits of the Cell struct.
-            // The other field is .slime, which is u4 for padding purposes but is actually stores bool.
-            // To access .strip_count, zig/llvm shifts the backing int of Cell (u8) left: >> 4.
-            // However, since .slime is guaranteed to be 0 or 1, we can just directly add the backing
-            // ints together up to 15 times before overflow occurs and shift >> 4 at the end.
-            // Since use_preprocessed contains more than 15 elements, we split it into two sub-arrays.
-            // This optimization saves 24 (26 - 2) right shifts, and combined with similar optimizations for
-            // add_count and sub_count, speeds up the function by over 80%.
-            // I tried signalling to LLVM that the padding bits are always 0 with asserts,
-            // but it was unable to perform the optimization. I discussed it with qwerasd in the Zig discord
-            // and they said, after experimentation, "it seems like it does not have any concept of 'the lower
-            // bits will never overflow in to this area, so we don't need to pre-shift'".
-
-            var preprocessed_count_1: u16 = 0;
-            for (use_preprocessed[0..15]) |location| {
-                preprocessed_count_1 += @as(u8, @bitCast(self.data[x * size + z + location.x * size + location.z]));
-            }
-            var preprocessed_count_2: u16 = 0;
-            for (use_preprocessed[15..]) |location| {
-                preprocessed_count_2 += @as(u8, @bitCast(self.data[x * size + z + location.x * size + location.z]));
-            }
-            count += @intCast((preprocessed_count_1 >> 4) + (preprocessed_count_2 >> 4));
-
-            var add_count: u16 = 0;
-            for (add) |location| add_count += @as(u8, @bitCast(self.data[x * size + z + location.x * size + location.z]));
-            count += @intCast(add_count & 0xf);
-
-            var sub_count: u16 = 0;
-            for (sub) |location| sub_count += @as(u8, @bitCast(self.data[x * size + z + location.x * size + location.z]));
-            count -= @intCast(sub_count & 0xf);
+    for (0..tested_size) |x| {
+        for (0..tested_size) |z| {
+            const count = prefix[x + window_size][z + window_size] -%
+                prefix[x][z + window_size] -%
+                prefix[x + window_size][z] +%
+                prefix[x][z];
 
             if (count >= params.threshold) {
-                sufficiently_slimy_chunks += 1;
-                const real_x = @as(i32, @intCast(x + offset)) + self.min_x;
-                const real_z = @as(i32, @intCast(z + offset)) + self.min_z;
-
-                if (real_x >= params.x0 and real_x < params.x1 and
-                    real_z >= params.z0 and real_z < params.z1)
-                {
-                    resultCallback(context, .{
-                        .x = real_x,
-                        .z = real_z,
-                        .count = count,
-                    });
+                const exact = exactDonutCount(&prefix, x, z);
+                if (exact >= params.threshold) {
+                    sufficiently_slimy_chunks += 1;
+                    const real_x = @as(i32, @intCast(x + offset)) + self.min_x;
+                    const real_z = @as(i32, @intCast(z + offset)) + self.min_z;
+                    if (real_x >= params.x0 and real_x < params.x1 and
+                        real_z >= params.z0 and real_z < params.z1)
+                    {
+                        resultCallback(context, .{ .x = real_x, .z = real_z, .count = exact });
+                    }
                 }
             }
         }
@@ -231,16 +190,32 @@ pub fn calculateSliminess(
     return sufficiently_slimy_chunks;
 }
 
+fn exactDonutCount(prefix: *const [size + 1][size + 1]u8, x: usize, z: usize) u8 {
+    var exact: u8 = 0;
+    inline for (donut_runs) |run| {
+        const pr = x + run.dx + 1;
+        const pc1 = z + run.c1 + 1;
+        const pc2 = z + run.c2 + 1;
+        const s: u8 = prefix[pr][pc2] -%
+            prefix[pr][pc1 - 1] -%
+            prefix[pr - 1][pc2] +%
+            prefix[pr - 1][pc1 - 1];
+        exact +%= s;
+    }
+    return exact;
+}
+
 pub fn calculateSliminessForLocation(world_seed: i64, x: i32, z: i32) u8 {
     var count: u8 = 0;
-    for (0..mask.len) |x_0| {
-        for (0..mask.len) |z_0| {
-            const slime = scalar.isSlime(
+    for (0..window_size) |dx| {
+        for (0..window_size) |dz| {
+            if (donut_mask[dx][dz] and scalar.isSlime(
                 world_seed,
-                x + @as(i32, @intCast(x_0)) - offset,
-                z + @as(i32, @intCast(z_0)) - offset,
-            );
-            count += @intFromBool(bit_mask[x_0][z_0] and slime);
+                x + @as(i32, @intCast(dx)) - offset,
+                z + @as(i32, @intCast(dz)) - offset,
+            )) {
+                count += 1;
+            }
         }
     }
     return count;
@@ -250,27 +225,13 @@ pub fn format(self: @This(), writer: *std.Io.Writer) !void {
     const width, const height = .{ 32, 32 };
     for (0..width) |x| {
         for (0..height) |z| {
-            try writer.print("{c} ", .{@as(u8, if (self.data[z * size + x].slime == 1) 'o' else '.')});
+            const cell = self.data[z * cells_per_row + x / lanes];
+            const bit = x % lanes;
+            try writer.print("{c} ", .{@as(u8, if (cell[bit] == 1) 'o' else '.')});
         }
         try writer.print("\n", .{});
     }
 }
-
-const bit_mask: [17][17]bool = blk: {
-    const inner = 1;
-    const outer = 8;
-    const dim = 2 * outer + 1;
-    var dist_mask: [dim][dim]bool = undefined;
-    for (&dist_mask, 0..) |*row, y| {
-        for (row, 0..) |*bit, x| {
-            const rx = @as(i32, @intCast(x)) - outer;
-            const ry = @as(i32, @intCast(y)) - outer;
-            const d2 = rx * rx + ry * ry;
-            bit.* = inner * inner < d2 and d2 <= outer * outer;
-        }
-    }
-    break :blk dist_mask;
-};
 
 test initScalar {
     const test_seed = @import("test_data.zig").test_seed;
@@ -279,7 +240,9 @@ test initScalar {
     const block = @import("test_data.zig").block;
     for (block, 0..) |row, z| {
         for (row, 0..) |c, x| {
-            try std.testing.expectEqual(c == 'O', chunk.data[x * size + z].slime == 1);
+            const cell = chunk.data[x * cells_per_row + z / lanes];
+            const bit = z % lanes;
+            try std.testing.expectEqual(c == 'O', cell[bit] == 1);
         }
     }
 }
@@ -291,7 +254,9 @@ test initSimd {
     const block = @import("test_data.zig").block;
     for (block, 0..) |row, z| {
         for (row, 0..) |c, x| {
-            try std.testing.expectEqual(c == 'O', chunk.data[x * size + z].slime == 1);
+            const cell = chunk.data[x * cells_per_row + z / lanes];
+            const bit = z % lanes;
+            try std.testing.expectEqual(c == 'O', cell[bit] == 1);
         }
     }
 }
@@ -302,19 +267,6 @@ test "initSimd and initScalar parity" {
         &initScalar(0x51133, 0xbeef, -0x51133135).data,
         &initSimd(0x51133, 0xbeef, -0x51133135).data,
     );
-}
-
-test preprocess {
-    if (true) return error.SkipZigTest;
-
-    var chunk = initSimd(0x51133, offset, offset);
-    chunk.preprocess();
-    for (0..size) |x| {
-        for (0..size) |z| {
-            std.debug.print("{}", .{chunk.data[x * size + z].strip_count});
-        }
-        std.debug.print("\n", .{});
-    }
 }
 
 test format {
@@ -329,7 +281,6 @@ test calculateSliminess {
     var results: std.ArrayList(slimy.Result) = .empty;
     defer results.deinit(std.testing.allocator);
     var chunk = initSimd(test_seed, 0, 0);
-    chunk.preprocess();
 
     const Context = struct {
         allocator: std.mem.Allocator,

@@ -65,6 +65,7 @@ pub fn build(b: *std.Build) !void {
         .root_module = exe.root_module,
     });
 
+
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);

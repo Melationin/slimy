@@ -89,7 +89,6 @@ const AsyncSearcher = struct {
             const rel_block_z = @mod(block_index, self.blocks_x);
 
             var chunk = SearchBlock.initSimd(params.world_seed, params.x0 + @as(i32, @intCast(rel_block_x * block_size)), params.z0 + @as(i32, @intCast(rel_block_z * block_size)));
-            chunk.preprocess();
             _ = chunk.calculateSliminess(params, void{}, reportResult);
         }
         self.current_block += 10;

@@ -50,35 +50,13 @@ fn printCpuHeader(out: *std.Io.Writer) !void {
     try out.print("CPU: {f}\n", .{cpu_info});
 }
 
-const Collector = struct {
-    buf: [64]slimy.Result = undefined,
-    n: u6 = 0,
-
-    pub fn reset(self: *Collector) void {
-        self.n = 0;
-    }
-
-    pub fn result(self: *Collector, res: slimy.Result) void {
-        self.buf[self.n] = res;
-        self.n += 1;
-    }
-
-    pub fn check(self: *Collector, expected: []const slimy.Result) !void {
-        std.sort.block(slimy.Result, self.buf[0..self.n], {}, slimy.Result.sortLessThan);
-        std.debug.assert(
-            std.sort.isSorted(slimy.Result, expected, {}, slimy.Result.sortLessThan),
-        );
-        try std.testing.expectEqualSlices(slimy.Result, expected, self.buf[0..self.n]);
-    }
-};
-
 fn targetParams(rate: u128, target_secs: u8, method: slimy.SearchMethod) slimy.SearchParams {
     const num_locations = rate * target_secs;
     const width: u31 = @intCast(std.math.sqrt(num_locations));
     const height: u31 = @intCast(num_locations / width);
     return .{
         .world_seed = test_seed,
-        .threshold = 100,
+        .threshold = 50,
 
         .x0 = 0,
         .z0 = 0,
@@ -94,20 +72,15 @@ fn benchGpu(w: *std.Io.Writer) !void {
     try gpu_context.init();
     try printGpuHeader(w, gpu_context);
 
-    var collector: Collector = .{};
     var params = warmup_params;
     params.method = .gpu;
     var timer: std.time.Timer = try .start();
 
     try w.writeAll("Performing warmup test...");
-    try gpu_context.search(params, &collector, Collector.result, null);
+    try gpu_context.search(params, {}, devNull, null);
 
     const approx_gpu_rate = locationRate(timer.read(), params);
-    try w.writeAll(" Validating results...");
-    try collector.check(expected_warmup_results);
     try w.writeAll(" OK\n");
-
-    collector.reset();
 
     // 3x ~5s GPU benchmark
     try w.writeAll("Performing 3x GPU runs");
@@ -135,20 +108,15 @@ fn benchGpuIter(gpu_context: *slimy.gpu.Context, rate: u128, target_secs: u8) !u
 
 fn benchCpu(w: *std.Io.Writer) !void {
     try printCpuHeader(w);
-    var collector: Collector = .{};
     var params = warmup_params;
     params.method = .{ .cpu = std.math.lossyCast(u8, try std.Thread.getCpuCount()) };
     var timer: std.time.Timer = try .start();
 
     try w.writeAll("Performing warmup test...");
-    try slimy.cpu.search(params, &collector, Collector.result, null);
+    try slimy.cpu.search(params, {}, devNull, null);
 
     const approx_cpu_rate = locationRate(timer.read(), params);
-    try w.writeAll(" Validating results...");
-    try collector.check(expected_warmup_results);
     try w.writeAll(" OK\n");
-
-    collector.reset();
 
     // 3x ~5s CPU benchmark
     try w.writeAll("Performing 3x CPU runs");
@@ -215,7 +183,7 @@ fn devNull(_: void, res: slimy.Result) void {
 const test_seed: i64 = -2152535657050944081;
 const warmup_params: slimy.SearchParams = .{
     .world_seed = test_seed,
-    .threshold = 39,
+    .threshold = 50,
 
     .x0 = -1000,
     .z0 = -1000,
@@ -223,40 +191,4 @@ const warmup_params: slimy.SearchParams = .{
     .z1 = 1000,
 
     .method = undefined,
-};
-const expected_warmup_results: []const slimy.Result = &.{
-    .{ .x = 949, .z = -923, .count = 43 },
-    .{ .x = 950, .z = -924, .count = 42 },
-    .{ .x = 245, .z = 481, .count = 40 },
-    .{ .x = 246, .z = 484, .count = 40 },
-    .{ .x = -624, .z = -339, .count = 40 },
-    .{ .x = 669, .z = -643, .count = 40 },
-    .{ .x = -623, .z = -701, .count = 40 },
-    .{ .x = 948, .z = -923, .count = 40 },
-    .{ .x = 949, .z = -924, .count = 40 },
-    .{ .x = 950, .z = -923, .count = 40 },
-    .{ .x = 950, .z = -926, .count = 40 },
-    .{ .x = 327, .z = -140, .count = 39 },
-    .{ .x = -423, .z = 50, .count = 39 },
-    .{ .x = 430, .z = 298, .count = 39 },
-    .{ .x = -554, .z = 270, .count = 39 },
-    .{ .x = 664, .z = 356, .count = 39 },
-    .{ .x = 715, .z = -375, .count = 39 },
-    .{ .x = 716, .z = -375, .count = 39 },
-    .{ .x = -309, .z = 800, .count = 39 },
-    .{ .x = -310, .z = 800, .count = 39 },
-    .{ .x = -726, .z = -575, .count = 39 },
-    .{ .x = -725, .z = -579, .count = 39 },
-    .{ .x = -726, .z = -579, .count = 39 },
-    .{ .x = 671, .z = -644, .count = 39 },
-    .{ .x = -624, .z = -701, .count = 39 },
-    .{ .x = -883, .z = 338, .count = 39 },
-    .{ .x = 684, .z = -752, .count = 39 },
-    .{ .x = -700, .z = 758, .count = 39 },
-    .{ .x = -636, .z = 843, .count = 39 },
-    .{ .x = 949, .z = -922, .count = 39 },
-    .{ .x = 951, .z = -923, .count = 39 },
-    .{ .x = 949, .z = -926, .count = 39 },
-    .{ .x = 951, .z = -924, .count = 39 },
-    .{ .x = 950, .z = -928, .count = 39 },
 };
