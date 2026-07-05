@@ -11,17 +11,25 @@ pub const offset: comptime_int = @divFloor(window_size, 2);
 const lanes = simd.lanes;
 const Cell = @Vector(lanes, u8);
 
-/// Minecraft despawn sphere mask: inner radius 1 < d² ≤ outer radius 8 (17×17 donut)
+/// Minecraft despawn sphere mask using chunk-border distances.
+/// dis:  shortest distance between chunk borders → must be ≤ 7.75 (~124 blocks)
+/// dis2: farthest distance between chunk borders → must be ≥ 1.5 (~24 blocks)
+/// This models: within 128-block despawn range, but outside 24-block no-spawn zone.
 const donut_mask: [window_size][window_size]bool = blk: {
-    const inner = 1;
-    const outer = 8;
     var m: [window_size][window_size]bool = undefined;
     for (0..window_size) |dx| {
         for (0..window_size) |dz| {
             const rx = @as(i32, @intCast(dx)) - offset;
             const rz = @as(i32, @intCast(dz)) - offset;
-            const d2 = rx * rx + rz * rz;
-            m[dx][dz] = inner * inner < d2 and d2 <= outer * outer;
+            // Shortest distance: shrink each dimension inward by 1 if non-zero
+            const sx: i32 = if (rx > 0) rx - 1 else if (rx < 0) rx + 1 else 0;
+            const sz: i32 = if (rz > 0) rz - 1 else if (rz < 0) rz + 1 else 0;
+            const d_min: f32 = @floatFromInt(sx * sx + sz * sz);
+            // Farthest distance: expand each dimension outward by 1 if non-zero
+            const lx: i32 = if (rx > 0) rx + 1 else if (rx < 0) rx - 1 else 0;
+            const lz: i32 = if (rz > 0) rz + 1 else if (rz < 0) rz - 1 else 0;
+            const d_max: f32 = @floatFromInt(lx * lx + lz * lz);
+            m[dx][dz] = @sqrt(d_min) <= 7.75 and @sqrt(d_max) >= 1.5;
         }
     }
     break :blk m;
@@ -29,8 +37,8 @@ const donut_mask: [window_size][window_size]bool = blk: {
 
 /// Contiguous horizontal runs in the donut, for prefix sum queries (20 total).
 const DonutRun = struct { dx: u5, c1: u5, c2: u5 };
-const donut_runs: [20]DonutRun = blk: {
-    var runs: [20]DonutRun = undefined;
+const donut_runs: [18]DonutRun = blk: {
+    var runs: [18]DonutRun = undefined;
     var n: usize = 0;
     for (0..window_size) |dx| {
         var in_run = false;
@@ -50,7 +58,7 @@ const donut_runs: [20]DonutRun = blk: {
             n += 1;
         }
     }
-    if (n != 20) @compileError("donut_runs mismatch");
+    if (n != 18) @compileError("donut_runs mismatch");
     break :blk runs;
 };
 
