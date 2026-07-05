@@ -24,5 +24,9 @@
             .url = "git+https://github.com/InspectorBoat/zcompute.git#248ad613c5133ff826096595001f451ddaf8c8b4",
             .hash = "zcompute-0.1.0-dev-nNmXK7M4IQAhXrEM98WgcNZ63uKxLkiHTS0OcBi2cRrb",
         },
+        .jni = .{
+            .url = "https://github.com/SuperIceCN/zig-jni/archive/refs/heads/main.tar.gz",
+            .hash = "jni-0.0.1-qf3mHEoJBADgTJirCPl6I65kKz6-PBwsV7PgN_EX6AQy",
+        },
     },
 }

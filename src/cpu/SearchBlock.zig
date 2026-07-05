@@ -3,7 +3,7 @@ const scalar = @import("slime_check.zig").scalar;
 const simd = @import("slime_check.zig").simd;
 const slimy = @import("../slimy.zig");
 
-pub const size = 512;
+pub const size = @import("build_opts").size;
 pub const window_size: comptime_int = 17;
 pub const tested_size: comptime_int = size - window_size + 1;
 pub const offset: comptime_int = @divFloor(window_size, 2);
@@ -90,27 +90,28 @@ pub fn calculateSliminess(
         self.data[i][0] = 0;
     }
 
-    // Row 0: SIMD slime check → scan → write prefix row 1
+    // Row 0: compute base, slime check → scan → write prefix row 1
     {
+        const base: i64 = simd.computeBase(params.world_seed, self.min_x);
         var carry: u8 = 0;
         for (0..size / lanes) |j| {
             const rel_z = j * lanes;
-            const raw: Cell = simd.areSlimeBiased(params.world_seed, self.min_x, self.min_z + @as(i32, @intCast(rel_z)));
+            const raw: Cell = simd.areSlimeBiasedFromBase(base, self.min_z + @as(i32, @intCast(rel_z)));
             const col = rel_z + 1;
             const v = scanCell(raw, &carry);
             @as(*[lanes]u8, @ptrCast(&self.data[1][col])).* = @bitCast(v);
         }
     }
 
-    // Remaining rows: slime check → scan → +prev → write
+    // Remaining rows: compute base per row (hoisted from inner cell loop)
     for (1..size) |row| {
         const prow = row + 1;
-        const abs_x: i32 = self.min_x + @as(i32, @intCast(row));
+        const base: i64 = simd.computeBase(params.world_seed, self.min_x + @as(i32, @intCast(row)));
         var carry: u8 = 0;
         for (0..size / lanes) |j| {
             const rel_z = j * lanes;
             const col = rel_z + 1;
-            const raw: Cell = simd.areSlimeBiased(params.world_seed, abs_x, self.min_z + @as(i32, @intCast(rel_z)));
+            const raw: Cell = simd.areSlimeBiasedFromBase(base, self.min_z + @as(i32, @intCast(rel_z)));
             var v: Cell = scanCell(raw, &carry);
             const prev: Cell = @bitCast(@as(*const [lanes]u8, @ptrCast(&self.data[row][col])).*);
             v +%= prev;

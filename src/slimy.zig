@@ -30,9 +30,12 @@ pub const SearchParams = struct {
 
     method: SearchMethod,
 
-    /// If true, results are emitted during the search via a dedicated reporter thread
-    /// instead of being buffered and emitted all at once after completion.
+    /// If true, results are emitted during the search via a dedicated reporter thread.
     report_during_search: bool = false,
+
+    /// Maximum number of results to buffer. Excess results are silently dropped.
+    /// Default: 1M (12MB), more than enough for any practical threshold.
+    max_results: usize = 1 << 20,
 };
 
 pub const SearchMethod = union(enum) {

@@ -1,2 +1,7 @@
 .zig-cache/
 zig-out/
+/jni/SlimyTest.class
+/jni/lib/
+/jni/out/
+/jni/SlimyJNI.class
+/jni/SlimyJNI.jar

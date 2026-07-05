@@ -79,7 +79,7 @@ pub fn searchMultithread(
     const thread_count = params.method.cpu;
 
     // Worker stack needs: data[(size+1)²] + call frames (~4KB)
-    const worker_stack_size = (SearchBlock.size + 1) * (SearchBlock.size + 1) + 4096;
+    const worker_stack_size: usize = @as(usize, SearchBlock.size + 1) * @as(usize, SearchBlock.size + 1) + 4096;
 
     const block_size = SearchBlock.tested_size;
     const blocks_x = std.math.divCeil(usize, @intCast(params.x1 - params.x0), block_size) catch unreachable;
@@ -88,7 +88,7 @@ pub fn searchMultithread(
 
     // Shared result buffer with atomic index. 1M entries is more than enough
     // for any practical threshold (max would be total_blocks * 240², threshold=0).
-    const result_buf = try std.heap.page_allocator.alloc(slimy.Result, 1 << 20); // 1M = ~12MB
+    const result_buf = try std.heap.page_allocator.alloc(slimy.Result, params.max_results);
     defer std.heap.page_allocator.free(result_buf);
     var shared: SharedCtx = .{ .buf = result_buf, .count = .init(0) };
 

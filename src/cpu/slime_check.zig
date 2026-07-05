@@ -1,15 +1,19 @@
 const std = @import("std");
 
 pub const simd = struct {
-    /// This is experimentally faster than the value std.simd.suggestVectorLength gives, which is 4
-    pub const lanes = 16;
+    pub const lanes = @import("build_opts").lanes;
 
     pub const Vec64 = @Vector(lanes, i64);
     pub const Vec32 = @Vector(lanes, i32);
     pub const Vecb = @Vector(lanes, bool);
-
-    /// Tests whether the chunks (x, z), (x, z + 1) ... (x, z + lanes - 1) are slime chunks
     pub const Vecu8 = @Vector(lanes, u8);
+
+    /// [0, 1, 2, ..., lanes-1] as i32, computed at compile time
+    const z_offsets: [lanes]i32 = blk: {
+        var arr: [lanes]i32 = undefined;
+        for (0..lanes) |i| arr[i] = @intCast(i);
+        break :blk arr;
+    };
 
     pub fn areSlime(world_seed: i64, x: i32, z: i32) Vecu8 {
         var random = Random.init(getRandomSeeds(world_seed, x, z));
@@ -20,6 +24,26 @@ pub const simd = struct {
     /// (<1 in 100,000,000) gives an incorrect result
     pub fn areSlimeBiased(world_seed: i64, x: i32, z: i32) Vecu8 {
         var random = Random.init(getRandomSeeds(world_seed, x, z));
+        return @intFromBool(random.nextIntsBiased(10) == @as(Vec32, @splat(0)));
+    }
+
+    /// Pre-computed x-dependent part: base = world_seed + fx(x)
+    /// MUST use i32 arithmetic for x² and x to match Minecraft's Java semantics exactly.
+    pub fn computeBase(world_seed: i64, x: i32) i64 {
+        return world_seed +%
+            @as(i64, x *% x *% 4987142) +%
+            @as(i64, x *% 5947611);
+    }
+
+    /// Optimized version: takes pre-computed base = world_seed + fx(x), only computes z part in SIMD.
+    /// Each row saves ~2 scalar multiplies + the @splat broadcast of x_increment.
+    pub fn areSlimeBiasedFromBase(base: i64, z: i32) Vecu8 {
+        const magic1: Vec64 = @splat(4392871);
+        const magic2: Vec32 = @splat(389711);
+        const zs: Vec32 = @as(Vec32, @splat(z)) + @as(Vec32, z_offsets);
+        const z_inc = @as(Vec64, zs *% zs) *% magic1 +% @as(Vec64, zs *% magic2);
+        const seeds: Vec64 = @as(Vec64, @splat(base)) +% z_inc ^ @as(Vec64, @splat(987234911));
+        var random = Random.init(seeds);
         return @intFromBool(random.nextIntsBiased(10) == @as(Vec32, @splat(0)));
     }
 
@@ -36,7 +60,7 @@ pub const simd = struct {
         const magic1: Vec64 = @splat(4392871);
         const magic2: Vec32 = @splat(389711);
 
-        const zs: Vec32 = @as(Vec32, @splat(z)) + @as(Vec32, .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 });
+        const zs: Vec32 = @as(Vec32, @splat(z)) + @as(Vec32, z_offsets);
         const z_increment =
             @as(Vec64, zs *% zs) *% magic1 +%
             @as(Vec64, zs *% magic2);
@@ -109,11 +133,8 @@ pub const simd = struct {
                 return @intCast((bound * @as(i64, self.next(31))) >> 31);
             }
 
-            const bounds: Vec32 = @splat(bound);
-
             const bits: Vec32 = self.next(31);
-            const val: Vec32 = @mod(bits, bounds);
-            return val;
+            return @mod(bits, @as(Vec32, @splat(bound)));
         }
 
         test nextIntsBiased {
