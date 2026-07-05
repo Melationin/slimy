@@ -36,11 +36,13 @@ pub fn searchSinglethread(
     const height: u64 = @intCast(params.z1 - params.z0);
     const total_chunks = width * height;
 
+    var block: SearchBlock = undefined;
     var x = params.x0;
     while (x < params.x1) : (x += block_size) {
         var z = params.z0;
         while (z < params.z1) : (z += block_size) {
-            var block = SearchBlock.initSimd(params.world_seed, x, z);
+            block.min_x = x - SearchBlock.offset;
+            block.min_z = z - SearchBlock.offset;
             _ = block.calculateSliminess(params, context, resultCallback);
             completed_chunks += block_size * block_size;
             (progressCallback orelse continue)(context, completed_chunks, total_chunks);
@@ -76,6 +78,9 @@ pub fn searchMultithread(
 
     const thread_count = params.method.cpu;
 
+    // Worker stack needs: data[(size+1)²] + call frames (~4KB)
+    const worker_stack_size = (SearchBlock.size + 1) * (SearchBlock.size + 1) + 4096;
+
     const block_size = SearchBlock.tested_size;
     const blocks_x = std.math.divCeil(usize, @intCast(params.x1 - params.x0), block_size) catch unreachable;
     const blocks_z = std.math.divCeil(usize, @intCast(params.z1 - params.z0), block_size) catch unreachable;
@@ -99,7 +104,7 @@ pub fn searchMultithread(
                 cb2(ctx2, total, total);
             }
         };
-        maybe_progress_reporter = try .spawn(.{}, Reporter.run, .{ context, cb, &shared, total_blocks });
+        maybe_progress_reporter = try .spawn(.{ .stack_size = 16 * 1024 }, Reporter.run, .{ context, cb, &shared, total_blocks });
     }
 
     // Spawn result reporter thread if output_during_search is enabled
@@ -126,12 +131,13 @@ pub fn searchMultithread(
                 }
             }
         };
-        maybe_result_reporter = try .spawn(.{}, ResultReporter.run, .{ context, resultCallback, &shared });
+        maybe_result_reporter = try .spawn(.{ .stack_size = 16 * 1024 }, ResultReporter.run, .{ context, resultCallback, &shared });
     }
 
-    var threads: [32]std.Thread = undefined;
-    for (threads[0..thread_count], 0..) |*thread, thread_index| {
-        thread.* = try .spawn(.{}, worker, .{
+    const threads = try std.heap.page_allocator.alloc(std.Thread, thread_count);
+    defer std.heap.page_allocator.free(threads);
+    for (threads, 0..) |*thread, thread_index| {
+        thread.* = try .spawn(.{ .stack_size = worker_stack_size }, worker, .{
             params,
             &shared,
             thread_index,
@@ -142,7 +148,7 @@ pub fn searchMultithread(
         std.log.scoped(.thread).debug("spawned thread {}", .{thread_index});
     }
     std.Thread.yield() catch {};
-    for (threads[0..thread_count]) |thread| {
+    for (threads) |thread| {
         thread.join();
     }
 
@@ -173,11 +179,12 @@ fn worker(
     const start_block = total_blocks * thread_id / thread_count;
     const end_block = total_blocks * (thread_id + 1) / thread_count;
 
+    var chunk: SearchBlock = undefined;
     for (start_block..end_block) |block_index| {
         const rel_block_x = block_index / blocks_x;
         const rel_block_z = @mod(block_index, blocks_x);
-        var chunk = SearchBlock.initSimd(params.world_seed, params.x0 + @as(i32, @intCast(rel_block_x * block_size)), params.z0 + @as(i32, @intCast(rel_block_z * block_size)));
-
+        chunk.min_x = params.x0 + @as(i32, @intCast(rel_block_x * block_size)) - SearchBlock.offset;
+        chunk.min_z = params.z0 + @as(i32, @intCast(rel_block_z * block_size)) - SearchBlock.offset;
         _ = chunk.calculateSliminess(params, shared, SharedCtx.append);
         _ = shared.blocks_done.fetchAdd(1, .monotonic);
     }

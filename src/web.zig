@@ -88,7 +88,9 @@ const AsyncSearcher = struct {
             const rel_block_x = block_index / self.blocks_x;
             const rel_block_z = @mod(block_index, self.blocks_x);
 
-            var chunk = SearchBlock.initSimd(params.world_seed, params.x0 + @as(i32, @intCast(rel_block_x * block_size)), params.z0 + @as(i32, @intCast(rel_block_z * block_size)));
+            const chunk_min_x = params.x0 + @as(i32, @intCast(rel_block_x * block_size)) - SearchBlock.offset;
+            const chunk_min_z = params.z0 + @as(i32, @intCast(rel_block_z * block_size)) - SearchBlock.offset;
+            var chunk: SearchBlock = .{ .data = undefined, .min_x = chunk_min_x, .min_z = chunk_min_z };
             _ = chunk.calculateSliminess(params, void{}, reportResult);
         }
         self.current_block += 10;
