@@ -76,3 +76,73 @@ pub fn search(
 comptime {
     jni.exportJNI("SlimyJNI", @This());
 }
+
+/// Same as search(), but returns merged regions (DSU, 8-directional adjacency).
+///
+/// Return format: flat int array [numRegions, r0_x, r0_z, r0_count, r0_size, r1_x, ...]
+/// 4 ints per region + 1 header int.
+pub fn searchMerged(
+    env: *jni.cEnv,
+    _: jni.jclass,
+    world_seed: jni.jlong,
+    x0: jni.jint,
+    z0: jni.jint,
+    x1: jni.jint,
+    z1: jni.jint,
+    threshold: jni.jint,
+    max_results: jni.jint,
+    thread_count: jni.jint,
+) callconv(.c) jni.jintArray {
+    const jenv = jni.JNIEnv.warp(env);
+
+    const mr: usize = @intCast(@max(1, max_results));
+    const buf_size = mr * 12;
+    const buf = std.heap.page_allocator.alloc(u8, buf_size) catch return null;
+    defer std.heap.page_allocator.free(buf);
+
+    var ctx: []u8 = buf;
+    result_count.store(0, .release);
+
+    slimy.cpu.search(.{
+        .world_seed = world_seed,
+        .threshold = @intCast(threshold),
+        .x0 = x0,
+        .z0 = z0,
+        .x1 = x1,
+        .z1 = z1,
+        .method = .{ .cpu = @intCast(@max(1, thread_count)) },
+        .max_results = mr,
+    }, &ctx, appendResult, null) catch {};
+
+    const n = @min(result_count.load(.acquire), mr);
+    const results: [*]slimy.Result = @ptrCast(@alignCast(buf.ptr));
+
+    // Sort, then merge adjacent results with DSU
+    std.sort.block(slimy.Result, results[0..n], {}, slimy.Result.sortLessThan);
+    const merged = slimy.mergeAdjacent(std.heap.page_allocator, results[0..n]) catch return null;
+    defer std.heap.page_allocator.free(merged);
+
+    // Write merged regions as flat int array:
+    // [numRegions, r0_x, r0_z, r0_count, r0_size, r1_x, ...]
+    const ints_per_region = 4;
+    const total_ints: jni.jsize = @intCast(1 + merged.len * ints_per_region);
+
+    // Reuse buf for output
+    const int_buf = std.heap.page_allocator.alloc(jni.jint, @intCast(total_ints)) catch return null;
+    defer std.heap.page_allocator.free(int_buf);
+
+    int_buf[0] = @intCast(merged.len);
+    for (merged, 0..) |region, i| {
+        const base = 1 + i * ints_per_region;
+        int_buf[base]     = region.best_x;
+        int_buf[base + 1] = region.best_z;
+        int_buf[base + 2] = @bitCast(region.best_count);
+        int_buf[base + 3] = @bitCast(region.size);
+    }
+
+    const arr = jenv.newPrimitiveArray(jni.jint, total_ints) orelse return null;
+    if (total_ints > 0) {
+        jenv.setArrayRegion(jni.jint, arr, 0, total_ints, int_buf.ptr);
+    }
+    return arr;
+}

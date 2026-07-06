@@ -145,23 +145,22 @@ const OutputContext = struct {
         self.lock.lock();
         defer self.lock.unlock();
 
-        if (self.options.sort) {
-            self.buf.append(self.allocator, res) catch {
-                self.clearProgress() catch {};
-
-                std.log.warn("Out of memory while attempting to sort items; output may be unsorted", .{});
-                self.printResult(res) catch |err| std.debug.panic("Error writing output: {s}", .{@errorName(err)});
-
-                self.printProgress() catch {};
-                return;
-            };
+        // Always buffer so we can DSU-merge later
+        self.buf.append(self.allocator, res) catch {
+            self.clearProgress() catch {};
+            std.log.warn("Out of memory while attempting to sort items; output may be unsorted", .{});
+            self.printResult(res) catch |err| std.debug.panic("Error writing output: {s}", .{@errorName(err)});
+            self.printProgress() catch {};
+            return;
+        };
+        if (self.options.sort and !self.options.merge) {
             // TODO: directly insert item
             std.sort.insertion(slimy.Result, self.buf.items, {}, slimy.Result.sortLessThan);
-        } else {
+        }
+        if (!self.options.sort and !self.options.merge) {
+            // Stream immediately (only when not merging)
             self.clearProgress() catch {};
-
             self.printResult(res) catch |err| std.debug.panic("Error writing output: {s}", .{@errorName(err)});
-
             self.printProgress() catch {};
         }
     }
@@ -219,9 +218,26 @@ const OutputContext = struct {
 
     pub fn flush(self: *OutputContext) void {
         self.clearProgress() catch {};
-        for (self.buf.items) |res| {
-            self.printResult(res) catch |err| std.debug.panic("Error writing output: {s}", .{@errorName(err)});
+
+        if (self.options.merge and self.buf.items.len > 0) {
+            // Merge adjacent results, then print each region in standard format
+            const merged = slimy.mergeAdjacent(self.allocator, self.buf.items) catch {
+                std.log.warn("Out of memory during DSU merge; skipping merged output", .{});
+                return;
+            };
+            defer self.allocator.free(merged);
+
+            for (merged) |region| {
+                self.printResult(.{ .x = region.best_x, .z = region.best_z, .count = region.best_count }) catch |err|
+                    std.debug.panic("Error writing output: {s}", .{@errorName(err)});
+            }
+        } else if (self.options.sort) {
+            // Print individually (sorted, not merged)
+            for (self.buf.items) |res| {
+                self.printResult(res) catch |err| std.debug.panic("Error writing output: {s}", .{@errorName(err)});
+            }
         }
+        // else: unsorted, not merged — already streamed during result()
     }
 
     pub fn deinit(self: *OutputContext) void {
@@ -239,6 +255,7 @@ const OutputContext = struct {
             .format = .csv,
             .sort = false,
             .progress = false,
+            .merge = true,
         });
         defer ctx.deinit();
 
@@ -250,10 +267,11 @@ const OutputContext = struct {
         ctx.result(.{ .x = -38, .z = -3, .count = 111 });
 
         ctx.flush();
+        // With merge=true, only merged regions are output (standard format)
         try std.testing.expectEqualStrings(
-            \\-6,-28,58
             \\28,-11,180
             \\-38,-3,111
+            \\-6,-28,58
             \\
         ,
             out.written(),
@@ -272,6 +290,7 @@ const OutputContext = struct {
             .format = .csv,
             .sort = false,
             .progress = true,
+            .merge = true,
         });
         defer ctx.deinit();
 
@@ -283,10 +302,11 @@ const OutputContext = struct {
         ctx.result(.{ .x = -38, .z = -3, .count = 111 });
 
         ctx.flush();
+        // With merge=true, only merged regions are output
         try std.testing.expectEqualStrings(
-            \\-6,-28,58
             \\28,-11,180
             \\-38,-3,111
+            \\-6,-28,58
             \\
         ,
             out.written(),
@@ -305,6 +325,7 @@ const OutputContext = struct {
             .format = .csv,
             .sort = true,
             .progress = true,
+            .merge = true,
         });
         defer ctx.deinit();
         std.log.warn("Testing OOM while sorting, warnings are expected", .{});
@@ -332,6 +353,7 @@ pub const OutputOptions = struct {
     format: Format,
     sort: bool,
     progress: bool,
+    merge: bool,
 
     const Format = enum {
         csv,
@@ -361,6 +383,7 @@ fn usage(out: *std.Io.Writer) u8 {
         \\  -s FILENAME     Read search parameters from a JSON file (or - for stdin)
         \\  -b              Benchmark mode
         \\  -r              Stream results during search (via reporter thread)
+        \\  -g              Group adjacent results into merged regions (DSU)
         \\
         \\
     ) catch return 1;
@@ -413,6 +436,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
 
         b: bool = false,
         r: bool = false,
+        g: bool = false,
     }, &args);
 
     if (flags.h) return error.Help;
@@ -520,6 +544,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
             .format = format,
             .sort = !flags.u,
             .progress = progress,
+            .merge = flags.g,
         },
     };
 }

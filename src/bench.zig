@@ -56,7 +56,7 @@ fn targetParams(rate: u128, target_secs: u8, method: slimy.SearchMethod) slimy.S
     const height: u31 = @intCast(num_locations / width);
     return .{
         .world_seed = test_seed,
-        .threshold = 50,
+        .threshold = 55,
 
         .x0 = 0,
         .z0 = 0,

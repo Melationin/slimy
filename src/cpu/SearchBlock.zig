@@ -29,7 +29,7 @@ const donut_mask: [window_size][window_size]bool = blk: {
             const lx: i32 = if (rx > 0) rx + 1 else if (rx < 0) rx - 1 else 0;
             const lz: i32 = if (rz > 0) rz + 1 else if (rz < 0) rz - 1 else 0;
             const d_max: f32 = @floatFromInt(lx * lx + lz * lz);
-            m[dx][dz] = @sqrt(d_min) <= 7.75 and @sqrt(d_max) >= 1.5;
+            m[dx][dz] = @sqrt(d_min) <= 7.5 and @sqrt(d_max) >= 1.5;
         }
     }
     break :blk m;
