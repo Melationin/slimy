@@ -33,6 +33,9 @@ pub const SearchParams = struct {
     /// If true, results are emitted during the search via a dedicated reporter thread
     /// instead of being buffered and emitted all at once after completion.
     report_during_search: bool = false,
+
+    /// After all threads finish, re-score results with weight_map and re-sort.
+    weighted_postprocess: bool = false,
 };
 
 pub const SearchMethod = union(enum) {

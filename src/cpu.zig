@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const slimy = @import("slimy.zig");
 const SearchBlock = @import("cpu/SearchBlock.zig");
+const scalar = @import("cpu/slime_check.zig").scalar;
 
 pub fn search(
     params: slimy.SearchParams,
@@ -156,6 +157,19 @@ pub fn searchMultithread(
     if (maybe_progress_reporter) |r| r.join();
     if (maybe_result_reporter) |r| r.join();
 
+    // Weighted re-score + sort (post-processing, outside hot path)
+    if (params.weighted_postprocess) {
+        const n = @min(shared.count.load(.acquire), result_buf.len);
+        if (n > 0) {
+            for (result_buf[0..n]) |*r| {
+                r.count = weightedScore(r.x, r.z, params.world_seed) * 2;
+                r.x *= 16;
+                r.z *= 16;
+            }
+            std.sort.block(slimy.Result, result_buf[0..n], {}, slimy.Result.sortLessThan);
+        }
+    }
+
     // Emit results after join only if not already emitted by the reporter thread
     if (!params.report_during_search) {
         const n = shared.count.load(.acquire);
@@ -163,6 +177,22 @@ pub fn searchMultithread(
             resultCallback(context, res);
         }
     }
+}
+
+fn weightedScore(x: i32, z: i32, world_seed: i64) u32 {
+    const map = SearchBlock.weight_map;
+    const off = SearchBlock.offset;
+    var score: u32 = 0;
+    for (0..SearchBlock.window_size) |dx| {
+        const cx = x + @as(i32, @intCast(dx)) - off;
+        for (0..SearchBlock.window_size) |dz| {
+            const w = map[dx][dz];
+            if (w != 0 and scalar.isSlimeBiased(world_seed, cx, z + @as(i32, @intCast(dz)) - off)) {
+                score += w;
+            }
+        }
+    }
+    return score;
 }
 
 fn worker(

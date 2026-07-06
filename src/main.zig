@@ -361,6 +361,7 @@ fn usage(out: *std.Io.Writer) u8 {
         \\  -s FILENAME     Read search parameters from a JSON file (or - for stdin)
         \\  -b              Benchmark mode
         \\  -r              Stream results during search (via reporter thread)
+        \\  -w              Weighted precision scoring, outputs block coords (×16)
         \\
         \\
     ) catch return 1;
@@ -413,6 +414,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
 
         b: bool = false,
         r: bool = false,
+        w: bool = false,
     }, &args);
 
     if (flags.h) return error.Help;
@@ -487,6 +489,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
 
                 .method = method,
                 .report_during_search = flags.r,
+                .weighted_postprocess = flags.w,
             };
         }
         searches = s;
@@ -510,6 +513,7 @@ fn parseArgs(arena: std.mem.Allocator) ArgsError!Options {
 
             .method = method,
             .report_during_search = flags.r,
+            .weighted_postprocess = flags.w,
         };
         searches = s;
     }
