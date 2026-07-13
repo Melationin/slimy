@@ -78,11 +78,6 @@ slimy-SYSTEM -mcpu -- SEED RANGE THRESHOLD
 ```sh
 zig build -Doptimize=ReleaseFast -Dgpu=false -Dcpu=native
 ```
-
-- `-Doptimize=ReleaseFast` → equivalent to C++ `-O3`
-- `-Dgpu=false` → skip Vulkan/shader deps, faster compile
-- `-Dcpu=native` → equivalent to `-march=native`, enables AVX2 etc.
-
 ### Run tests
 
 ```sh
