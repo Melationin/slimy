@@ -7,7 +7,7 @@ It can search on either the CPU or the GPU, and makes use of multithreading to s
 
 > The CPU search path has been heavily optimized with SIMD (up to 16-wide vectors),
 > 2D prefix sums with zero-padding, and `@shuffle`-based parallel prefix scans.
-> On a 13th Gen i9-13980HX it reaches ~5.7 billion locations/sec — roughly 3× the original.
+> On a 13th Gen i9-13980HX it reaches ~9.0 billion locations/sec — roughly 4× the original.
 
 ## Usage
 
