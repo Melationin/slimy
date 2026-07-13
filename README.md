@@ -17,6 +17,14 @@ For small searches, I recommend using the [web interface][slimy-web], which will
 This is slower than the native binaries, but is much easier to use and can still search a 5000 chunk range in less than 15 seconds.
 
 For large scale searches, use the native version. The latest build can be downloaded [here][builds].
+
+> [!IMPORTANT]
+> For the **best performance**, it is strongly recommended to compile Slimy yourself.
+> The prebuilt CI binaries skip CPU-specific optimizations (`-Dcpu=native`) to remain
+> portable across different machines. A locally compiled binary with `-Dcpu=native` can
+> be **significantly faster** (AVX2, BMI2, FMA, etc. depending on your CPU).
+> See [Building from source](#building-from-source) below — it only takes one command.
+
 The correct binary for your system is listed below (where `RANDOM` is a combination of letters and numbers):
 
 - `slimy-0.1.0-dev+RANDOM-x86_64-windows` for Windows systems
