@@ -20,10 +20,10 @@ For large scale searches, use the native version. The latest build can be downlo
 
 > [!IMPORTANT]
 > For the **best performance**, it is strongly recommended to compile Slimy yourself.
-> The prebuilt CI binaries skip CPU-specific optimizations (`-Dcpu=native`) to remain
+> The prebuilt CI binaries skip CPU-specific optimizations ( `-Dcpu=native` ) to remain
 > portable across different machines. A locally compiled binary with `-Dcpu=native` can
 > be **significantly faster** (AVX2, BMI2, FMA, etc. depending on your CPU).
-> See [Building from source](#building-from-source) below — it only takes one command.
+> See [Building from source](#building-from-source) below.
 
 The correct binary for your system is listed below (where `RANDOM` is a combination of letters and numbers):
 
