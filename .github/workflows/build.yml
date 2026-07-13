@@ -14,11 +14,11 @@ jobs:
       - name: Run tests
         run: zig build test
       - name: Build for x86_64 Linux glibc
-        run: zig build -Doptimize=ReleaseSafe -Dsuffix -Dstrip -Dtimestamp -Dtarget=x86_64-linux-gnu
+        run: zig build -Doptimize=ReleaseFast -Dgpu=false -Dsuffix -Dstrip=false -Dtimestamp -Dtarget=x86_64-linux-gnu
       - name: Build for x86_64 Linux musl
-        run: zig build -Doptimize=ReleaseSafe -Dsuffix -Dstrip -Dtimestamp -Dtarget=x86_64-linux-musl
+        run: zig build -Doptimize=ReleaseFast -Dgpu=false -Dsuffix -Dstrip=false -Dtimestamp -Dtarget=x86_64-linux-musl
       - name: Build for x86_64 Windows
-        run: zig build -Doptimize=ReleaseSafe -Dsuffix -Dstrip -Dtimestamp -Dtarget=x86_64-windows
+        run: zig build -Doptimize=ReleaseFast -Dgpu=false -Dsuffix -Dstrip=false -Dtimestamp -Dtarget=x86_64-windows
       - uses: actions/upload-artifact@v5
         with:
           name: binaries
