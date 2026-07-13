@@ -7,11 +7,11 @@ It can search on either the CPU or the GPU, and makes use of multithreading to s
 
 > The CPU search path has been heavily optimized with SIMD (up to 16-wide vectors),
 > 2D prefix sums with zero-padding, and `@shuffle`-based parallel prefix scans.
-> On a 13th Gen i9-13980HX it reaches ~5.7 billion locations/sec — roughly 3× the original.
+> On a 13th Gen i9-13980HX it reaches ~9.5 billion locations/sec — roughly 4.5× the original.
 
 ## Usage
 
-**NOTE: Slimy uses entirely chunk coordinates. This means you should multiply all result coordinates by 16 to get the corresponding block coordinates**
+**NOTE: Slimy uses entirely chunk coordinates by default. Multiply result coordinates by 16 to get block coordinates. With the `-w` flag, outputs are already in block coordinates (×16).**
 
 For small searches, I recommend using the [web interface][slimy-web], which will run in your browser.
 This is slower than the native binaries, but is much easier to use and can still search a 5000 chunk range in less than 15 seconds.
@@ -53,6 +53,42 @@ slimy-SYSTEM -mcpu -- SEED RANGE THRESHOLD
 - CPU search requires an x86_64 CPU and a few megabytes of RAM
 - GPU search will work on most Vulkan-capable GPUs
 
+## Building from source
+
+### Requirements
+
+- **Zig 0.15.x** (tested with 0.15.2). Download from [ziglang.org](https://ziglang.org/download/)
+- **x86_64 CPU** (the SIMD paths require x86_64)
+- Optional: **Vulkan SDK** (for GPU search via `zcompute`)
+
+### Build options
+
+| Option | Values | Default | Description |
+|--------|--------|---------|-------------|
+| `-Doptimize` | `Debug`, `ReleaseFast`, `ReleaseSafe`, `ReleaseSmall` | `Debug` | Optimization level |
+| `-Dgpu` | `true`, `false` | `true` | Enable GPU (Vulkan) search support |
+| `-Dcpu` | CPU target (e.g. `native`) | baseline | Target CPU features |
+| `-Dsinglethread` | `true`, `false` | `false` | Single-threaded mode |
+| `-Dstrip` | `true`, `false` | `false` | Strip debug symbols |
+| `-Dsize` | `256`, `512`, `1024` | `512` | Search block size |
+| `-Dlanes` | `8`, `16` | `16` | SIMD vector width |
+
+### Recommended build
+
+```sh
+zig build -Doptimize=ReleaseFast -Dgpu=false -Dcpu=native
+```
+
+- `-Doptimize=ReleaseFast` → equivalent to C++ `-O3`
+- `-Dgpu=false` → skip Vulkan/shader deps, faster compile
+- `-Dcpu=native` → equivalent to `-march=native`, enables AVX2 etc.
+
+### Run tests
+
+```sh
+zig build test
+```
+
 ## Advanced usage
 
 For users wanting more control, there are some options that can change how Slimy behaves.
@@ -91,6 +127,20 @@ This is done with the `-r` option, which spawns a dedicated reporter thread:
 ```
 slimy-SYSTEM -r -- SEED RANGE THRESHOLD
 ```
+
+### Weighted precision scoring
+
+Use the `-w` flag to re-score results with a precision-weighted map after the search.
+This weights each slime chunk by its position within the 17×17 donut — chunks closer to
+the center get higher weight. The output coordinates are also converted to **block
+coordinates** (×16) for convenience:
+
+```
+slimy-SYSTEM -w -- SEED RANGE THRESHOLD
+```
+
+Note: this is a post-processing step run after all threads finish; it does not affect
+search speed but may increase memory usage slightly.
 
 ### Custom thread count
 

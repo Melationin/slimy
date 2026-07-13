@@ -361,7 +361,7 @@ fn usage(out: *std.Io.Writer) u8 {
         \\  -s FILENAME     Read search parameters from a JSON file (or - for stdin)
         \\  -b              Benchmark mode
         \\  -r              Stream results during search (via reporter thread)
-        \\  -w              Weighted precision scoring, outputs block coords (×16)
+        \\  -w              Weighted precision scoring, outputs block coords (*16)
         \\
         \\
     ) catch return 1;
