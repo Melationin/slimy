@@ -2,8 +2,9 @@ const std = @import("std");
 const scalar = @import("slime_check.zig").scalar;
 const simd = @import("slime_check.zig").simd;
 const slimy = @import("../slimy.zig");
+const config = @import("build_config");
 
-pub const size = 512;
+pub const size:comptime_int = config.size;
 pub const window_size: comptime_int = 17;
 pub const tested_size: comptime_int = size - window_size + 1;
 pub const offset: comptime_int = @divFloor(window_size, 2);

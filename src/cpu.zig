@@ -80,7 +80,7 @@ pub fn searchMultithread(
     const thread_count = params.method.cpu;
 
     // Worker stack needs: data[(size+1)²] + call frames (~4KB)
-    const worker_stack_size = (SearchBlock.size + 1) * (SearchBlock.size + 1) + 4096;
+    const worker_stack_size = (SearchBlock.size + 1) * (SearchBlock.size + 1) + 4096*4;
 
     const block_size = SearchBlock.tested_size;
     const blocks_x = std.math.divCeil(usize, @intCast(params.x1 - params.x0), block_size) catch unreachable;

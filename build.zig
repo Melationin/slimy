@@ -1,7 +1,7 @@
 const std = @import("std");
 const localasm = @import("localasm");
 
-const slimy_version = std.SemanticVersion.parse("0.1.0-dev") catch @panic("Parse error");
+const slimy_version = std.SemanticVersion.parse("0.1.1-dev") catch @panic("Parse error");
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -12,6 +12,14 @@ pub fn build(b: *std.Build) !void {
     const suffix = b.option(bool, "suffix", "Suffix binary names with version and target") orelse false;
     const timestamp = b.option(bool, "timestamp", "Include build timestamp in version information") orelse false;
     const glslc = b.option([]const u8, "glslc", "Specify the path to the glslc binary") orelse "glslc";
+    const lanes = b.option(u8, "lanes", "SIMD vector width") orelse 16;
+    const size = b.option(u16, "size", "Search block size") orelse 512;
+    const exe_name2 = b.option([]const u8, "exe-name", "Custom executable name") orelse "slimy";
+
+    const options = b.addOptions();
+
+    options.addOption(u8, "lanes", lanes);
+    options.addOption(u16, "size", size);
 
     const shader_compile = b.addSystemCommand(&.{ glslc, "-o" });
     const shader_spv = shader_compile.addOutputFileArg("search.spv");
@@ -25,9 +33,9 @@ pub fn build(b: *std.Build) !void {
     consts.addOption(bool, "gpu_support", gpu_support);
 
     const exe_name = if (suffix)
-        b.fmt("slimy-{f}-{s}", .{ version, target.query.zigTriple(b.allocator) catch @panic("OOM") })
+        b.fmt("{s}-{f}-{s}", .{ exe_name2,version, target.query.zigTriple(b.allocator) catch @panic("OOM") })
     else
-        "slimy";
+        exe_name2;
     const exe = b.addExecutable(.{
         .name = exe_name,
         .root_module = b.createModule(.{
@@ -44,6 +52,7 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("build_consts", consts.createModule());
     exe.root_module.addImport("optz", b.dependency("optz", .{}).module("optz"));
     exe.root_module.addImport("cpuinfo", b.dependency("cpuinfo", .{}).module("cpuinfo"));
+    exe.root_module.addOptions("build_config", options);
 
     if (gpu_support) gpu_support: {
         exe.root_module.addImport("zcompute", (b.lazyDependency("zcompute", .{}) orelse break :gpu_support).module("zcompute"));

@@ -1,8 +1,8 @@
 const std = @import("std");
-
+const config = @import("build_config");
 pub const simd = struct {
     /// This is experimentally faster than the value std.simd.suggestVectorLength gives, which is 4
-    pub const lanes = 16;
+    pub const lanes:comptime_int = config.lanes;
 
     pub const Vec64 = @Vector(lanes, i64);
     pub const Vec32 = @Vector(lanes, i32);
@@ -23,6 +23,16 @@ pub const simd = struct {
         return @intFromBool(random.nextIntsBiased(10) == @as(Vec32, @splat(0)));
     }
 
+
+    fn rangeVector(comptime N: usize, comptime T: type) @Vector(N, T) {
+        var array: [N]T = undefined;
+        for (&array, 0..) |*elem, i| {
+            elem.* = @as(T, @intCast(i));
+        }
+        return @as(@Vector(N, T), array);
+    }
+
+
     /// Returns the seeds used by the PRNG for chunks (x, z), (x, z + 1) ... (x, z + lanes - 1)
     /// See scalar.getRandomSeeds
     pub fn getRandomSeeds(world_seed: i64, x: i32, z: i32) Vec64 {
@@ -36,7 +46,7 @@ pub const simd = struct {
         const magic1: Vec64 = @splat(4392871);
         const magic2: Vec32 = @splat(389711);
 
-        const zs: Vec32 = @as(Vec32, @splat(z)) + @as(Vec32, .{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 });
+        const zs: Vec32 = @as(Vec32, @splat(z)) + rangeVector(lanes,i32);
         const z_increment =
             @as(Vec64, zs *% zs) *% magic1 +%
             @as(Vec64, zs *% magic2);
